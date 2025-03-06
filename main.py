@@ -1,61 +1,63 @@
 import telebot
-from googletrans import Translator
-from gtts import gTTS
+from deep_translator import GoogleTranslator
 import edge_tts
 import os
 import asyncio
+import tempfile
 
 API_TOKEN = "7604019745:AAGzwL7e43EjboFRTRS9DfwO_tDfT7sAiT8"
 bot = telebot.TeleBot(API_TOKEN)
-translator = Translator()
 
 
 @bot.message_handler(commands=['start', 'help'])
-def start(message):
+def send_welcome(message):
     bot.send_message(
         message.chat.id,
-        "Assalomu alaykum!\nBu bot so‘zlarni o‘zbekchadan inglizchaga yoki aksincha tarjima qiladi "
-        "va ovozli o‘qib beradi! 🎙"
+        """Assalomu alaykum! 👋\n
+        Bu bot siz yuborgan so‘zni ingliz yoki o‘zbek tiliga tarjima qiladi va ovozli talaffuz faylini yuboradi.\n
+        So‘z yuboring va natijani kuting! ✨"""
     )
 
 
 @bot.message_handler(content_types=['text'])
 def translate_text(message):
     text = message.text
-    detected_lang = translator.detect(text).lang
+    try:
+        # Avtomatik tildan tarjima qilish
+        translated_to_en = GoogleTranslator(source='auto', target='en').translate(text)
+        translated_to_uz = GoogleTranslator(source='auto', target='uz').translate(text)
 
-    if detected_lang == 'uz':
-        translated_text = translator.translate(text, dest='en').text
-        tts = gTTS(translated_text, lang='en')
-        audio_file = "voice.mp3"
-        tts.save(audio_file)
-        flag = "🇺🇿➡️🇬🇧"
-    elif detected_lang == 'en':
-        translated_text = translator.translate(text, dest='uz').text
-        flag = "🇬🇧➡️🇺🇿"
+        # Tarjima natijasini chiqarish
+        response = f"\n🇺🇿 ➡️ 🇬🇧 {translated_to_en}\n🇬🇧 ➡️ 🇺🇿 {translated_to_uz}"
+        bot.send_message(message.chat.id, response)
 
-        voice = 'uz-UZ-MadinaNeural'  # Microsoft Edge Uzbek voice
-        audio_file = "voice.mp3"
+        # Ovozli talaffuz yaratish
+        en_voice = 'en-US-JennyNeural'
+        uz_voice = 'uz-UZ-MadinaNeural'
 
-        # Edge TTS orqali ovozli fayl yaratish
-        asyncio.run(save_audio_edge_tts(translated_text, voice, audio_file))
-    else:
-        bot.send_message(message.chat.id, "Kechirasiz, faqat o‘zbek va ingliz tillari qo‘llab-quvvatlanadi.")
-        return
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as en_tmpfile, \
+                tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as uz_tmpfile:
 
-    # Matnli tarjima yuborish
-    bot.send_message(message.chat.id, f"{flag}\n{translated_text}")
+            # Ingliz tilida ovoz yaratish
+            tts_en = edge_tts.Communicate(translated_to_en, en_voice)
+            asyncio.run(tts_en.save(en_tmpfile.name))
 
-    # Ovozli xabar yuborish
-    with open(audio_file, "rb") as voice:
-        bot.send_audio(message.chat.id, voice)
-    os.remove(audio_file)
+            # O‘zbek tilida ovoz yaratish
+            tts_uz = edge_tts.Communicate(translated_to_uz, uz_voice)
+            asyncio.run(tts_uz.save(uz_tmpfile.name))
 
+            # Fayllarni yuborish
+            with open(en_tmpfile.name, "rb") as voice:
+                bot.send_audio(message.chat.id, voice)
 
-async def save_audio_edge_tts(text, voice, filename):
-    """Edge-TTS orqali ovozli fayl yaratish."""
-    tts = edge_tts.Communicate(text, voice)
-    await tts.save(filename)
+            with open(uz_tmpfile.name, "rb") as voice:
+                bot.send_audio(message.chat.id, voice)
+
+            # Fayllarni o‘chirish
+            os.unlink(en_tmpfile.name)
+            os.unlink(uz_tmpfile.name)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Xatolik yuz berdi: {e}")
 
 
 bot.polling(non_stop=True)
